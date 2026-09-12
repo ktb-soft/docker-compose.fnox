@@ -1,0 +1,11 @@
+[tools]
+go = "latest"
+
+[tasks.build]
+run = 'CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION:-dev}" -o "${OUT:-bin/docker-compose-fnox}" .'
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.check]
+run = ["test -z \"$(gofmt -l .)\"", "go vet ./...", "go test ./..."]
