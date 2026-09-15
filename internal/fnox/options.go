@@ -3,7 +3,10 @@
 package fnox
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -39,8 +42,7 @@ const (
 var Params = []compose.Param{
 	{
 		Name:        OptConfigPath,
-		Description: "Path to the fnox.toml to resolve secrets from",
-		Required:    true,
+		Description: "Path to the fnox.toml to resolve secrets from, defaulting to fnox.toml or .fnox.toml in the directory docker compose runs in",
 	},
 	{
 		Name:        OptCredentialsPath,
@@ -87,9 +89,8 @@ var Params = []compose.Param{
 
 // Options is the parsed provider.options block of one Compose service.
 type Options struct {
-	// ConfigPath is the fnox.toml to resolve against. It is required: Compose
-	// does not define the working directory a provider runs in, so fnox's own
-	// search up the directory tree has no reliable place to start.
+	// ConfigPath is the fnox.toml to resolve against. It is never left to fnox's
+	// own search up the directory tree, which would merge every config above.
 	ConfigPath string
 	// CredentialsPath is a dotenv file of backend credentials, loaded into the
 	// provider process before fnox runs.
@@ -157,6 +158,12 @@ func FromRequest(req *compose.Request) (Options, error) {
 		return Options{}, err
 	}
 
+	if strings.TrimSpace(opts.ConfigPath) == "" {
+		if opts.ConfigPath, err = findConfigInWorkingDir(); err != nil {
+			return Options{}, err
+		}
+	}
+
 	if err := opts.validate(); err != nil {
 		return Options{}, err
 	}
@@ -174,12 +181,28 @@ func FromRequest(req *compose.Request) (Options, error) {
 	return opts, nil
 }
 
+var defaultConfigNames = []string{"fnox.toml", ".fnox.toml"}
+
+// findConfigInWorkingDir is the fallback when path_config_toml is omitted.
+// Compose runs the provider in the directory docker compose was invoked from,
+// not the directory holding the Compose file.
+func findConfigInWorkingDir() (string, error) {
+	for _, name := range defaultConfigNames {
+		info, err := os.Stat(name)
+		if err == nil && !info.IsDir() {
+			return name, nil
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("checking for %s: %w", name, err)
+		}
+	}
+	return "", fmt.Errorf("option %s is not set and no %s exists in the current directory",
+		OptConfigPath, strings.Join(defaultConfigNames, " or "))
+}
+
 // validate covers the rules that span more than one option, which Params
 // cannot express on its own.
 func (o Options) validate() error {
-	if strings.TrimSpace(o.ConfigPath) == "" {
-		return fmt.Errorf("option %s is empty", OptConfigPath)
-	}
 	if o.CacheEnabled && o.CacheProvider == "" {
 		return fmt.Errorf("option %s is required when %s is true",
 			OptCacheProvider, OptCacheEnabled)

@@ -1,6 +1,7 @@
 package fnox
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -64,14 +65,9 @@ func TestFromRequestRejects(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "config missing",
-			options: nil,
-			want:    "path_config_toml",
-		},
-		{
 			name:    "config empty",
 			options: []string{"--path_config_toml="},
-			want:    "path_config_toml is empty",
+			want:    "path_config_toml",
 		},
 		{
 			name: "cache without provider",
@@ -203,5 +199,55 @@ func TestFromRequestRejectsLocalFileWithAnOddConfigName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fnox.toml or .fnox.toml") {
 		t.Errorf("error = %q, want it to name the allowed filenames", err)
+	}
+}
+
+func TestFromRequestDefaultsToAConfigInTheWorkingDirectory(t *testing.T) {
+	for _, name := range []string{"fnox.toml", ".fnox.toml"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			if err := os.WriteFile(name, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			opts, err := FromRequest(request(t))
+			if err != nil {
+				t.Fatalf("FromRequest: %v", err)
+			}
+			if want := filepath.Join(dir, name); opts.ConfigPath != want {
+				t.Errorf("ConfigPath = %q, want %q", opts.ConfigPath, want)
+			}
+		})
+	}
+}
+
+func TestFromRequestPrefersFnoxTomlOverDotFnoxToml(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for _, name := range []string{"fnox.toml", ".fnox.toml"} {
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	opts, err := FromRequest(request(t))
+	if err != nil {
+		t.Fatalf("FromRequest: %v", err)
+	}
+	if want := filepath.Join(dir, "fnox.toml"); opts.ConfigPath != want {
+		t.Errorf("ConfigPath = %q, want %q", opts.ConfigPath, want)
+	}
+}
+
+func TestFromRequestRejectsAMissingDefaultConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	_, err := FromRequest(request(t))
+	if err == nil {
+		t.Fatal("FromRequest succeeded, want an error for the missing config")
+	}
+	if !strings.Contains(err.Error(), "no fnox.toml or .fnox.toml exists") {
+		t.Errorf("error = %q, want it to name the default filenames", err)
 	}
 }
